@@ -1,0 +1,26 @@
+{
+  "name": "supportos",
+  "version": "1.0.0",
+  "description": "Enterprise support ticketing platform with real-time integrations",
+  "scripts": {
+    "setup": "cd server && npm install",
+    "start": "cd server && npm start",
+    "dev": "cd server && npm run dev",
+    "test:slack": "curl -X POST http://localhost:3001/api/webhooks/slack/org-1/test -H 'Content-Type: application/json' -d '{\"text\": \"Test Slack message\"}'",
+    "test:email": "curl -X POST http://localhost:3001/api/webhooks/email/org-1/test -H 'Content-Type: application/json' -d '{\"from\": \"test@example.com\", \"subject\": \"Test\", \"text\": \"Test email message\"}'",
+    "serve:client": "cd client && python3 -m http.server 8080"
+  },
+  "keywords": [
+    "ticketing",
+    "support",
+    "helpdesk",
+    "customer-service",
+    "multi-tenant",
+    "slack",
+    "email",
+    "integrations"
+  ],
+  "author": "",
+  "license": "UNLICENSED",
+  "private": true
+}
