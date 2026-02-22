@@ -1,0 +1,524 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Organizations ──────────────────────────────────────────────────────────────
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  domain    String?
+  logo      String?
+  plan      Plan     @default(FREE)
+  seats     Int      @default(3)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members      Member[]
+  tickets      Ticket[]
+  tags         Tag[]
+  customFields CustomFieldDef[]
+  slaPolicies  SlaPolicy[]
+  macros       Macro[]
+  automations  AutomationRule[]
+  integrations Integration[]
+  views        SavedView[]
+  invites      Invite[]
+  billing      Billing?
+  customers    Customer[]
+  articles     KnowledgeArticle[]
+
+  @@map("organizations")
+}
+
+enum Plan {
+  FREE
+  PRO
+  BUSINESS
+  ENTERPRISE
+}
+
+// ─── Users & Membership ─────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  avatar       String?
+  status       String   @default("active")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships     Member[]
+  assignedTickets Ticket[]         @relation("TicketAssignee")
+  messages        Message[]
+  activities      Activity[]
+  watchedTickets  TicketWatcher[]
+  macros          Macro[]          @relation("UserMacros")
+  views           SavedView[]      @relation("UserViews")
+  presences       AgentPresence[]
+
+  @@map("users")
+}
+
+model Member {
+  id     String @id @default(cuid())
+  role   Role   @default(AGENT)
+  userId String
+  orgId  String
+
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgId])
+  @@map("members")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  AGENT
+  VIEWER
+}
+
+// ─── Tickets ────────────────────────────────────────────────────────────────────
+
+model Ticket {
+  id          String       @id @default(cuid())
+  number      Int
+  orgId       String
+  title       String
+  description String?      @db.Text
+  status      TicketStatus @default(OPEN)
+  priority    Priority     @default(MEDIUM)
+  channel     Channel      @default(EMAIL)
+
+  assigneeId String?
+  customerId String?
+
+  slaBreached     Boolean   @default(false)
+  slaDeadline     DateTime?
+  slaPolicyId     String?
+  snoozeUntil     DateTime?
+  firstResponseAt DateTime?
+  resolvedAt      DateTime?
+
+  mergedIntoId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  assignee   User?        @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  customer   Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  slaPolicy  SlaPolicy?   @relation(fields: [slaPolicyId], references: [id], onDelete: SetNull)
+  mergedInto Ticket?      @relation("TicketMerges", fields: [mergedIntoId], references: [id], onDelete: SetNull)
+  mergedFrom Ticket[]     @relation("TicketMerges")
+
+  messages     Message[]
+  activities   Activity[]
+  attachments  Attachment[]
+  customFields CustomFieldValue[]
+  linkedIssues LinkedIssue[]
+  watchers     TicketWatcher[]
+  channelData  ChannelData?
+  tags         TicketTag[]
+
+  @@unique([orgId, number])
+  @@index([orgId, status])
+  @@index([orgId, priority])
+  @@index([orgId, assigneeId])
+  @@index([orgId, createdAt])
+  @@index([orgId, updatedAt])
+  @@map("tickets")
+}
+
+model TicketTag {
+  ticketId String
+  tagId    String
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([ticketId, tagId])
+  @@map("ticket_tags")
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  PENDING
+  ON_HOLD
+  RESOLVED
+  CLOSED
+}
+
+enum Priority {
+  URGENT
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum Channel {
+  EMAIL
+  SLACK
+  TEAMS
+  WHATSAPP
+  CHAT
+  API
+  PHONE
+}
+
+// ─── Messages & Conversations ───────────────────────────────────────────────────
+
+model Message {
+  id       String      @id @default(cuid())
+  ticketId String
+  authorId String?
+  type     MessageType @default(REPLY)
+  body     String      @db.Text
+  html     String?     @db.Text
+
+  createdAt DateTime @default(now())
+
+  ticket      Ticket       @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author      User?        @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  attachments Attachment[]
+
+  @@index([ticketId, createdAt])
+  @@map("messages")
+}
+
+enum MessageType {
+  REPLY
+  NOTE
+  CUSTOMER
+  SYSTEM
+  AI_SUGGESTION
+}
+
+// ─── Customers ──────────────────────────────────────────────────────────────────
+
+model Customer {
+  id        String   @id @default(cuid())
+  orgId     String
+  email     String
+  name      String?
+  company   String?
+  avatar    String?
+  phone     String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  tickets Ticket[]
+
+  @@unique([orgId, email])
+  @@map("customers")
+}
+
+// ─── Tags ───────────────────────────────────────────────────────────────────────
+
+model Tag {
+  id    String @id @default(cuid())
+  orgId String
+  name  String
+  color String @default("#6B7280")
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  tickets TicketTag[]
+
+  @@unique([orgId, name])
+  @@map("tags")
+}
+
+// ─── Custom Fields ──────────────────────────────────────────────────────────────
+
+model CustomFieldDef {
+  id       String          @id @default(cuid())
+  orgId    String
+  name     String
+  key      String
+  type     CustomFieldType
+  options  Json?
+  required Boolean         @default(false)
+  position Int             @default(0)
+
+  org    Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  values CustomFieldValue[]
+
+  @@unique([orgId, key])
+  @@map("custom_field_defs")
+}
+
+enum CustomFieldType {
+  TEXT
+  NUMBER
+  DROPDOWN
+  MULTISELECT
+  DATE
+  BOOLEAN
+  URL
+}
+
+model CustomFieldValue {
+  id       String @id @default(cuid())
+  fieldId  String
+  ticketId String
+  value    String
+
+  field  CustomFieldDef @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  ticket Ticket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@unique([fieldId, ticketId])
+  @@map("custom_field_values")
+}
+
+// ─── SLA Policies ───────────────────────────────────────────────────────────────
+
+model SlaPolicy {
+  id               String   @id @default(cuid())
+  orgId            String
+  name             String
+  priority         Priority
+  firstResponseMin Int
+  resolutionMin    Int
+  businessHoursOnly Boolean @default(true)
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  tickets Ticket[]
+
+  @@unique([orgId, priority])
+  @@map("sla_policies")
+}
+
+// ─── Macros (Canned Responses) ──────────────────────────────────────────────────
+
+model Macro {
+  id       String  @id @default(cuid())
+  orgId    String
+  userId   String?
+  name     String
+  content  String  @db.Text
+  actions  Json?
+  shortcut String?
+  isShared Boolean @default(true)
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User?        @relation("UserMacros", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("macros")
+}
+
+// ─── Automation Rules ───────────────────────────────────────────────────────────
+
+model AutomationRule {
+  id      String  @id @default(cuid())
+  orgId   String
+  name    String
+  enabled Boolean @default(true)
+  trigger Json
+  actions Json
+  order   Int     @default(0)
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("automation_rules")
+}
+
+// ─── Activity Log ───────────────────────────────────────────────────────────────
+
+model Activity {
+  id       String   @id @default(cuid())
+  ticketId String
+  userId   String?
+  type     String
+  data     Json?
+  createdAt DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+  @@map("activities")
+}
+
+// ─── Attachments ────────────────────────────────────────────────────────────────
+
+model Attachment {
+  id        String @id @default(cuid())
+  ticketId  String
+  messageId String?
+  filename  String
+  mimeType  String
+  size      Int
+  url       String
+
+  ticket  Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  message Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@map("attachments")
+}
+
+// ─── Linked Issues ──────────────────────────────────────────────────────────────
+
+model LinkedIssue {
+  id         String  @id @default(cuid())
+  ticketId   String
+  provider   String
+  externalId String
+  url        String
+  title      String?
+  status     String?
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@map("linked_issues")
+}
+
+// ─── Ticket Watchers ────────────────────────────────────────────────────────────
+
+model TicketWatcher {
+  ticketId String
+  userId   String
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([ticketId, userId])
+  @@map("ticket_watchers")
+}
+
+// ─── Channel Data ───────────────────────────────────────────────────────────────
+
+model ChannelData {
+  id       String  @id @default(cuid())
+  ticketId String  @unique
+  channel  Channel
+  data     Json
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@map("channel_data")
+}
+
+// ─── Integrations ───────────────────────────────────────────────────────────────
+
+model Integration {
+  id          String  @id @default(cuid())
+  orgId       String
+  provider    String
+  enabled     Boolean @default(false)
+  config      Json?
+  accessToken String?
+  webhookUrl  String?
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, provider])
+  @@map("integrations")
+}
+
+// ─── Saved Views ────────────────────────────────────────────────────────────────
+
+model SavedView {
+  id        String   @id @default(cuid())
+  orgId     String
+  userId    String?
+  name      String
+  filters   Json
+  sort      Json?
+  columns   Json?
+  type      ViewType @default(LIST)
+  icon      String?
+  isDefault Boolean  @default(false)
+  isShared  Boolean  @default(true)
+
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User?        @relation("UserViews", fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("saved_views")
+}
+
+enum ViewType {
+  LIST
+  KANBAN
+  CARD
+  TABLE
+}
+
+// ─── Invites ────────────────────────────────────────────────────────────────────
+
+model Invite {
+  id         String    @id @default(cuid())
+  orgId      String
+  email      String
+  role       Role      @default(AGENT)
+  token      String    @unique
+  expiresAt  DateTime
+  acceptedAt DateTime?
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("invites")
+}
+
+// ─── Billing ────────────────────────────────────────────────────────────────────
+
+model Billing {
+  id               String   @id @default(cuid())
+  orgId            String   @unique
+  plan             Plan     @default(FREE)
+  interval         String   @default("monthly")
+  amount           Int      @default(0)
+  stripeCustomerId String?
+  stripeSubId      String?
+  nextBillingDate  DateTime?
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("billings")
+}
+
+// ─── Agent Presence (for collision detection) ───────────────────────────────────
+
+model AgentPresence {
+  id        String   @id @default(cuid())
+  userId    String
+  ticketId  String
+  action    String   @default("viewing")
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, ticketId])
+  @@index([ticketId])
+  @@map("agent_presences")
+}
+
+// ─── Knowledge Base ─────────────────────────────────────────────────────────────
+
+model KnowledgeArticle {
+  id        String   @id @default(cuid())
+  orgId     String
+  title     String
+  content   String   @db.Text
+  category  String?
+  published Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@map("knowledge_articles")
+}
